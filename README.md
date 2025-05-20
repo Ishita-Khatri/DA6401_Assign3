@@ -1,6 +1,6 @@
-# Model Training and Evaluation
+This repository contains the implementation of a sequence-to-sequence RNN model with different cell types such as vanilla RNN, LSTM, and GRU. The task is to transliterate Latin sequences to Devanagari. The data is taken from the Dakshina Dataset by Google. 
 
-This repository contains the implementation of a sequence to sequence RNN model with different cell types. that is trained with the AdamW optimizer, enhanced with gradient clipping and beam search for improved performance. The model uses two types of accuracy (Token Accuracy and Sequence Accuracy) to evaluate its performance during training.
+Firstly, the vanilla RNN/LSTM/GRU is run without an attention mechanism, and then an attention mechanism is implemented to evaluate performance. The attention mechanism performs better even with fewer encoder and decoder layers. 
 
 ## Key Features:
 - **AdamW Optimizer**: We use the AdamW optimizer with a weight decay of 1e-5 to help prevent overfitting.
@@ -15,40 +15,10 @@ This repository contains the implementation of a sequence to sequence RNN model 
 - After each epoch, both **token accuracy** and **sequence accuracy** are calculated and logged to monitor performance.
 
 ## Results:
-After training for 20 epochs, the following accuracies were achieved:
-
-### Validation Accuracy:
-- **Token Accuracy**: 70.08%
-- **Sequence Accuracy**: 35.08%
-
-### Test Accuracy:
+For the vanilla RNN (without attention), the following test accuracy was achieved after training for 20 epochs:
 - **Token Accuracy**: 71.33%
 - **Sequence Accuracy**: 35.41%
 
-## Usage:
-1. **Clone this repository**:
-    ```bash
-    git clone https://github.com/yourusername/repository-name.git
-    cd repository-name
-    ```
-
-2. **Install Dependencies**:
-    Make sure you have Python and pip installed. Then, install the necessary libraries:
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-3. **Training the Model**:
-    To train the model, simply run:
-    ```bash
-    python train.py
-    ```
-
-4. **Evaluation**:
-    After training, you can evaluate the model on the test set using:
-    ```bash
-    python evaluate.py
-    ```
-
-## License:
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Whereas, the best attention-based model achieved the following test accuracy:
+- **Token Accuracy**: 77.37%
+- **Sequence Accuracy**: 44.29%
