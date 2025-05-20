@@ -1,5 +1,3 @@
-# README
-
 ## **py Folder**
 The `py` folder contains the **vanilla** and **attention-based** Python files that can be run.
 
