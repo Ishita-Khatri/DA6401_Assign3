@@ -3,9 +3,16 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
 import wandb
+from tqdm import tqdm
 import torch.nn.functional as F
+from collections import Counter
+from wandb.sklearn import plot_confusion_matrix
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix
+import config
 
 # %%
 def load_dakshina_lexicon_pairs(filepath):
@@ -257,25 +264,37 @@ sweep_config = {
 }
 
 # %%
-import wandb
-
+def get_words_from_tensor(tens,dict_char2idx,dict_idx2char,word=True):
+    target_seq = tens.tolist() if hasattr(tens, 'tolist') else tens
+    if isinstance(target_seq[0], list):
+        target_seq = target_seq[0]
+    if target_seq[0] == dict_char2idx['<sos>']:
+        target_seq = target_seq[1:]
+    if dict_char2idx.get('<eos>') in target_seq:
+        target_seq = target_seq[:target_seq.index(dict_char2idx['<eos>'])]
+    if word==True:
+        return ''.join(dict_idx2char[i] for i in target_seq)
+    else:
+        return target_seq
 
 # %%
-filepath = "/kaggle/input/dakshina-dataset-v1-0/dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.train.tsv"
+filepath = config.dict['train_path']
+filepath_val = config.dict['val_path']
+filepath_test = config.dict['test_path']
+
 pairs = load_dakshina_lexicon_pairs(filepath)
+pairs_val = load_dakshina_lexicon_pairs(filepath_val)
+pairs_test = load_dakshina_lexicon_pairs(filepath_test)
 
 input_char2idx, input_idx2char, output_char2idx, output_idx2char = build_vocab(pairs)
 
-print("Latin char2idx:", list(input_char2idx.items())[:5])
-print("Devanagari idx2char:", list(output_idx2char.items())[:5])
-
-print(len(list(output_char2idx.keys())))
-
 dataset = TransliterationDataset(pairs, input_char2idx, output_char2idx)
-
-filepath_val = "/kaggle/input/dakshina-dataset-v1-0/dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.dev.tsv"
-pairs_val = load_dakshina_lexicon_pairs(filepath_val)
 dataset_val = TransliterationDataset(pairs_val, input_char2idx, output_char2idx)
+dataset_test = TransliterationDataset(pairs_test, input_char2idx, output_char2idx)
+
+dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
+dataloader_val = DataLoader(dataset_val, batch_size=1, shuffle=False, collate_fn=collate_fn)
+dataloader_test = DataLoader(dataset_test, batch_size=1, shuffle=False, collate_fn=collate_fn)
 
 # %%
 def train():
@@ -453,24 +472,6 @@ wandb.agent(sweep_id, function=train, count=20)
 wandb.finish()
 
 # %%
-from tqdm import tqdm
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-import torch.nn.functional as F
-
-filepath_test = "/kaggle/input/dakshina-dataset-v1-0/dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.test.tsv"
-pairs_test = load_dakshina_lexicon_pairs(filepath_test)
-dataset_test = TransliterationDataset(pairs_test, input_char2idx, output_char2idx)
-dataloader_test = DataLoader(dataset_test, batch_size=1, shuffle=False, collate_fn=collate_fn)
-
-filepath_val = "/kaggle/input/dakshina-dataset-v1-0/dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.dev.tsv"
-pairs_val = load_dakshina_lexicon_pairs(filepath_val)
-dataset_val = TransliterationDataset(pairs_val, input_char2idx, output_char2idx)
-dataloader_val = DataLoader(dataset_val, batch_size=1, shuffle=False, collate_fn=collate_fn)
-
-dataset = TransliterationDataset(pairs, input_char2idx, output_char2idx)
-dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
 
 #  Best configuration
 embed_size=32
@@ -648,6 +649,8 @@ correct_tokens = 0
 total_tokens = 0
 beam_width = beam_size  
 result=[]
+result_tensor=[]
+i=0
 with torch.no_grad():
     for input_tensor, input_lengths, target_tensor, target_lengths in dataloader_test:
         input_tensor = input_tensor.to(device)
@@ -740,6 +743,13 @@ with torch.no_grad():
         if input_char2idx.get('<eos>') in input_seq:
             input_seq = input_seq[:input_seq.index(input_char2idx['<eos>'])]
         input_word = ''.join(input_idx2char[i] for i in input_seq)
+        
+        predicted_tensor=get_words_from_tensor(best_seq,output_char2idx,output_idx2char,False)
+        target_ten = get_words_from_tensor(target_tensor,output_char2idx,output_idx2char,False)
+        if len(predicted_tensor)==len(target_ten):
+            result_tensor.append((predicted_tensor,target_ten))
+        else: 
+            i+=1
 
         result.append((input_word, predicted_word, target_word))
         # predicted_word = indices_to_words([best_seq], output_idx2char)[0]
@@ -765,124 +775,6 @@ with open('predictions_attention.csv', 'w', newline='', encoding='utf-8') as f:
         writer.writerow([t, pred, target])
 
 # %%
-def get_words_from_tensor(tens,dict_char2idx,dict_idx2char,word=True):
-    target_seq = tens.tolist() if hasattr(tens, 'tolist') else tens
-    if isinstance(target_seq[0], list):
-        target_seq = target_seq[0]
-    if target_seq[0] == dict_char2idx['<sos>']:
-        target_seq = target_seq[1:]
-    if dict_char2idx.get('<eos>') in target_seq:
-        target_seq = target_seq[:target_seq.index(dict_char2idx['<eos>'])]
-    if word==True:
-        return ''.join(dict_idx2char[i] for i in target_seq)
-    else:
-        return target_seq
-
-# %%
-# ======== TEST ========
-encoder.eval()
-decoder.eval()
-correct_sequences = 0
-total_sequences = 0
-correct_tokens = 0
-total_tokens = 0
-beam_width = beam_size  
-result=[]
-i=0
-result_tensor=[]
-with torch.no_grad():
-    for input_tensor, input_lengths, target_tensor, target_lengths in dataloader_test:
-        input_tensor = input_tensor.to(device)
-        target_tensor = target_tensor.to(device)
-
-        encoder_outputs, encoder_hidden = encoder(input_tensor, input_lengths)
-        max_target_len = target_tensor.size(1)
-        total_sequences += 1
-
-        # Beam is a list of tuples: (sequence_so_far, cumulative_log_prob, decoder_hidden)
-        beam = [([output_char2idx['<sos>']], 0.0, encoder_hidden)]
-
-        completed_sequences = []
-
-        for _ in range(1, max_target_len):
-            new_beam = []
-            for seq, score, hidden in beam:
-                decoder_input = torch.tensor([[seq[-1]]], device=device)
-                decoder_output, hidden_next,_ = decoder(decoder_input, hidden,encoder_outputs)
-                log_probs = F.log_softmax(decoder_output.squeeze(1), dim=1)
-
-                topk_log_probs, topk_indices = log_probs.topk(beam_width)
-
-                for k in range(beam_width):
-                    next_token = topk_indices[0][k].item()
-                    next_score = score + topk_log_probs[0][k].item()
-                    new_seq = seq + [next_token]
-                    new_beam.append((new_seq, next_score, hidden_next))
-
-            # Keep top `beam_width` beams with highest scores
-            beam = sorted(new_beam, key=lambda x: x[1], reverse=True)[:beam_width]
-
-            # Move completed sequences out
-            beam, completed = [], []
-            for seq, score, hidden in new_beam:
-                if seq[-1] == output_char2idx['<eos>']:
-                    completed_sequences.append((seq, score))
-                else:
-                    beam.append((seq, score, hidden))
-            beam = sorted(beam, key=lambda x: x[1], reverse=True)[:beam_width]
-
-        # Choose best completed or best incomplete beam
-        if completed_sequences:
-            best_seq = max(completed_sequences, key=lambda x: x[1])[0]
-        else:
-            best_seq = max(beam, key=lambda x: x[1])[0]
-
-        # Remove <sos> if present
-        if best_seq[0] == output_char2idx['<sos>']:
-            best_seq = best_seq[1:]
-        
-        # Compare prediction with target
-        target_seq = target_tensor[0, 1:].tolist()
-        pad_idx = output_char2idx['<pad>']
-
-        # Token accuracy
-        for pred_token, tgt_token in zip(best_seq, target_seq):
-            if tgt_token == pad_idx:
-                break
-            if pred_token == tgt_token:
-                correct_tokens += 1
-            total_tokens += 1
-
-        # Sequence accuracy
-        target_trimmed = [t for t in target_seq if t != pad_idx]
-        best_seq_trimmed = best_seq[:len(target_trimmed)]
-        if best_seq_trimmed == target_trimmed:
-            correct_sequences += 1
-        
-        predicted_tensor=get_words_from_tensor(best_seq,output_char2idx,output_idx2char,False)
-        target_ten = get_words_from_tensor(target_tensor,output_char2idx,output_idx2char,False)
-        if len(predicted_tensor)==len(target_ten):
-            result_tensor.append((predicted_tensor,target_ten))
-        else: 
-            i+=1
-        
-        # predicted_word = indices_to_words([best_seq], output_idx2char)[0]
-        # actual_word = indices_to_words([target_trimmed], output_idx2char)[0]
-        # # print(f"Predicted: {predicted_word.ljust(20)} | Actual: {actual_word}")
-
-sequence_accuracy = correct_sequences / total_sequences if total_sequences > 0 else 0
-token_accuracy = correct_tokens / total_tokens if total_tokens > 0 else 0
-print("Test:")
-print(f"Token Accuracy: {token_accuracy:.4f}")
-print(f"Sequence Accuracy: {sequence_accuracy:.4f}")
-
-# %%
-from collections import Counter
-import numpy as np
-import wandb
-from sklearn.metrics import confusion_matrix
-from wandb.sklearn import plot_confusion_matrix
-wandb.login(key="70a00ae1607c730fb9cd50b1268b191bec7a2901")
 y_pred = [s for pred, _ in result_tensor for s in pred]
 y_true = [s for _, true in result_tensor for s in true]
 
@@ -906,11 +798,6 @@ wandb.init(project="try3")
 plot_confusion_matrix(filtered_true, filtered_pred, top_labels)
 
 # %%
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.metrics import confusion_matrix
-
 special_token_ids = [0, 1, 2, 3]  
 vowel_ids = list(range(4, 19))   
 consonant_ids = list(range(19, 52))  

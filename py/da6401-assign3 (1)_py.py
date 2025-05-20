@@ -1,4 +1,20 @@
 # %%
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+import wandb
+from tqdm import tqdm
+import torch.nn.functional as F
+from collections import Counter
+from wandb.sklearn import plot_confusion_matrix
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix
+import config
+
+
 def load_dakshina_lexicon_pairs(filepath):
     pairs=[]
     with open(filepath, 'r', encoding='utf-8') as f:
@@ -12,13 +28,6 @@ def load_dakshina_lexicon_pairs(filepath):
             devanagari_word, latin_word,_ = parts
             pairs.append((latin_word, devanagari_word))  # reverse order
     return pairs
-
-# %%
-filepath = "/kaggle/input/dakshina-dataset-v1-0/dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.train.tsv"
-pairs = load_dakshina_lexicon_pairs(filepath)
-
-for i in range(5):
-    print(pairs[i])
 
 # %%
 def build_vocab(pairs, add_special_tokens=True):
@@ -50,16 +59,6 @@ def build_vocab(pairs, add_special_tokens=True):
     return input_char2idx, input_idx2char, output_char2idx, output_idx2char
 
 # %%
-input_char2idx, input_idx2char, output_char2idx, output_idx2char = build_vocab(pairs)
-
-print("Latin char2idx:", list(input_char2idx.items())[:5])
-print("Devanagari idx2char:", list(output_idx2char.items())[:5])
-
-print(len(list(output_char2idx.keys())))
-
-# %%
-import torch
-import torch.nn as nn
 class Encoder(nn.Module):
     def __init__(self, input_vocab_size, embed_size, hidden_size, num_encoder_layers=1, cell_type='lstm', dropout=0.0):
         super(Encoder, self).__init__()
@@ -254,11 +253,6 @@ class Decoder(nn.Module):
             return output, hidden
 
 # %%
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-
 class TransliterationDataset(Dataset):
     def __init__(self, pairs, input_char2idx, output_char2idx):
         
@@ -319,6 +313,19 @@ def collate_fn(batch):
 
     return input_tensor, input_lengths, target_tensor, target_lengths
 
+def get_words_from_tensor(tens,dict_char2idx,dict_idx2char,word=True):
+    target_seq = tens.tolist() if hasattr(tens, 'tolist') else tens
+    if isinstance(target_seq[0], list):
+        target_seq = target_seq[0]
+    if target_seq[0] == dict_char2idx['<sos>']:
+        target_seq = target_seq[1:]
+    if dict_char2idx.get('<eos>') in target_seq:
+        target_seq = target_seq[:target_seq.index(dict_char2idx['<eos>'])]
+    if word==True:
+        return ''.join(dict_idx2char[i] for i in target_seq)
+    else:
+        return target_seq
+
 # %%
 sweep_config = {
     'method': 'bayes',  # Could also be 'random' or 'grid'
@@ -344,23 +351,25 @@ sweep_config = {
 }
 
 # %%
-import wandb
+filepath = config.dict['train_path']
+filepath_val = config.dict['val_path']
+filepath_test = config.dict['test_path']
 
-# %%
-filepath_val = "/kaggle/input/dakshina-dataset-v1-0/dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.dev.tsv"
+pairs = load_dakshina_lexicon_pairs(filepath)
 pairs_val = load_dakshina_lexicon_pairs(filepath_val)
+pairs_test = load_dakshina_lexicon_pairs(filepath_test)
+
+input_char2idx, input_idx2char, output_char2idx, output_idx2char = build_vocab(pairs)
 
 dataset = TransliterationDataset(pairs, input_char2idx, output_char2idx)
 dataset_val = TransliterationDataset(pairs_val, input_char2idx, output_char2idx)
+dataset_test = TransliterationDataset(pairs_test, input_char2idx, output_char2idx)
+
+dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
+dataloader_val = DataLoader(dataset_val, batch_size=1, shuffle=False, collate_fn=collate_fn)
+dataloader_test = DataLoader(dataset_test, batch_size=1, shuffle=False, collate_fn=collate_fn)
 
 # %%
-from tqdm import tqdm
-import torch
-import torch.nn as nn
-import wandb
-from torch.utils.data import DataLoader
-import torch.nn.functional as F
-
 def train():
     wandb.init()
     config = wandb.config
@@ -542,25 +551,6 @@ wandb.agent(sweep_id, function=train, count=20)
 wandb.finish()
 
 # %%
-from tqdm import tqdm
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-import torch.nn.functional as F
-
-filepath_test = "/kaggle/input/dakshina-dataset-v1-0/dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.test.tsv"
-pairs_test = load_dakshina_lexicon_pairs(filepath_test)
-dataset_test = TransliterationDataset(pairs_test, input_char2idx, output_char2idx)
-dataloader_test = DataLoader(dataset_test, batch_size=1, shuffle=False, collate_fn=collate_fn)
-
-filepath_val = "/kaggle/input/dakshina-dataset-v1-0/dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.dev.tsv"
-pairs_val = load_dakshina_lexicon_pairs(filepath_val)
-dataset_val = TransliterationDataset(pairs_val, input_char2idx, output_char2idx)
-dataloader_val = DataLoader(dataset_val, batch_size=1, shuffle=False, collate_fn=collate_fn)
-
-dataset = TransliterationDataset(pairs, input_char2idx, output_char2idx)
-dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
-
 #  Best configuration
 embed_size=64
 num_encoder_layers=3
@@ -738,6 +728,8 @@ correct_tokens = 0
 total_tokens = 0
 beam_width = beam_size  # You can change this
 result=[]
+result_tensor=[]
+i=0
 with torch.no_grad():
     for input_tensor, input_lengths, target_tensor, target_lengths in dataloader_test:
         input_tensor = input_tensor.to(device)
@@ -830,6 +822,13 @@ with torch.no_grad():
         if input_char2idx.get('<eos>') in input_seq:
             input_seq = input_seq[:input_seq.index(input_char2idx['<eos>'])]
         input_word = ''.join(input_idx2char[i] for i in input_seq)
+        
+        predicted_tensor=get_words_from_tensor(best_seq,output_char2idx,output_idx2char,False)
+        target_ten = get_words_from_tensor(target_tensor,output_char2idx,output_idx2char,False)
+        if len(predicted_tensor)==len(target_ten):
+            result_tensor.append((predicted_tensor,target_ten))
+        else: 
+            i+=1
 
         result.append((input_word, predicted_word, target_word))
         # Optional print
@@ -855,4 +854,71 @@ with open('predictions_vanilla.csv', 'w', newline='', encoding='utf-8') as f:
     for t, pred, target in result:
         writer.writerow([t, pred, target])
 
+# %%
+y_pred = [s for pred, _ in result_tensor for s in pred]
+y_true = [s for _, true in result_tensor for s in true]
 
+y_pred_chars = [output_idx2char[idx] for idx in y_pred]
+y_true_chars = [output_idx2char[idx] for idx in y_true]
+
+labels = sorted(output_char2idx.keys())
+# Count label frequencies
+freq = Counter(y_true_chars)
+# Select top N labels
+top_n = 15
+top_labels = [label for label, count in freq.most_common(top_n)]
+
+filtered_true = []
+filtered_pred = []
+for t, p in zip(y_true_chars, y_pred_chars):
+    if t in top_labels and p in top_labels:
+        filtered_true.append(t)
+        filtered_pred.append(p)
+wandb.init(project="try3")
+plot_confusion_matrix(filtered_true, filtered_pred, top_labels)
+
+# %%
+special_token_ids = [0, 1, 2, 3]  
+vowel_ids = list(range(4, 19))   
+consonant_ids = list(range(19, 52))  
+matra_ids = list(range(52, 67))  
+
+groups = {
+    "Special Tokens": special_token_ids,
+    "Vowels": vowel_ids,
+    "Consonants": consonant_ids,
+    "Matras & Modifiers": matra_ids,
+}
+
+def filter_by_pred_group(y_true, y_pred, group_ids):
+    filtered_true = []
+    filtered_pred = []
+    for yt, yp in zip(y_true, y_pred):
+        if yp in group_ids:
+            filtered_true.append(yt)
+            filtered_pred.append(yp)
+    return filtered_true, filtered_pred
+
+def plot_cm(y_true_group, y_pred_group, group_ids, group_name):
+    cm = confusion_matrix(
+        y_true_group, 
+        y_pred_group, 
+        labels=group_ids
+    )
+    
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=group_ids, yticklabels=group_ids)
+    plt.title(f"Confusion Matrix for {group_name}")
+    plt.xlabel("Predicted ID")
+    plt.ylabel("True ID")
+    plt.show()
+
+for group_name, group_ids in groups.items():
+    y_true_group, y_pred_group = filter_by_pred_group(y_true, y_pred, group_ids)
+    
+    if len(y_true_group) == 0:
+        print(f"No data to plot for group: {group_name}")
+        continue
+    
+    plot_cm(y_true_group, y_pred_group, group_ids, group_name)
