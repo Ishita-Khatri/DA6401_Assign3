@@ -22,3 +22,16 @@ For the vanilla RNN (without attention), the following test accuracy was achieve
 Whereas, the best attention-based model achieved the following test accuracy:
 - **Token Accuracy**: 77.37%
 - **Sequence Accuracy**: 44.29%
+
+
+## **File Organization**
+
+**Folder `py`:**  
+Runnable Python files for training, validation, and testing.
+
+**Files:**  
+- `da6401-assign3.ipynb`: Vanilla training, validation, and testing code  
+- `da6401-assign3-attention.ipynb`: Attention-based training, validation, and testing code  
+- `grid.ipynb`: Plots grids with input Latin, target Devanagari, and predicted Devanagari words  
+- `heatmap-visualization.ipynb`: Plots attention heatmap and visualizes attention on hover  
+- `prediction_vanilla.csv` and `prediction_attention.csv`: CSV files of vanilla and attention-based test predictions  
